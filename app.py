@@ -182,3 +182,9 @@ async def history7():
         "averageScore": avg_score,
         "risk": evaluate_depression_risk(avg_score)
     }
+    
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 5000))  # ใช้ PORT จาก Railway
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
+
