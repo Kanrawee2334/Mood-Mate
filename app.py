@@ -1,47 +1,50 @@
 import os
 import json
 from datetime import datetime, timedelta
-from flask import Flask, request, jsonify, render_template
-import google.generativeai as genai
 from dotenv import load_dotenv
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+import google.generativeai as genai
 
-# Load environment variables from .env file
+# โหลด .env
 load_dotenv()
 
-app = Flask(__name__, template_folder="templates")
+app = FastAPI()
 
-# Configure the Gemini API
+# Template
+templates = Jinja2Templates(directory="templates")
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# ตั้งค่า Gemini API
 try:
     genai.configure(api_key=os.environ["GEMINI_API_KEY"])
     model = genai.GenerativeModel('gemini-2.0-flash')
 except KeyError:
     model = None
-    print("ข้อผิดพลาด: ไม่พบ GEMINI_API_KEY ในไฟล์ .env")
+    print("❌ GEMINI_API_KEY not found")
 except Exception as e:
     model = None
-    print(f"เกิดข้อผิดพลาดในการตั้งค่า Gemini API: {e}")
-
+    print(f"❌ Error configuring Gemini API: {e}")
 
 DATA_FILE = "emotion_history.json"
 
+# โหลดประวัติ
 def load_history():
     try:
         with open(DATA_FILE, "r", encoding="utf-8") as f:
-            # Check if file is empty
             content = f.read()
-            if not content:
-                return []
-            return json.loads(content)
-    except FileNotFoundError:
-        return []
-    except json.JSONDecodeError:
-        # If the file contains invalid JSON, treat as empty
+            return json.loads(content) if content else []
+    except (FileNotFoundError, json.JSONDecodeError):
         return []
 
+# บันทึกประวัติ
 def save_history(data):
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
+# ประเมินความเสี่ยงซึมเศร้า
 def evaluate_depression_risk(avg_score):
     if avg_score < 20:
         return {
@@ -56,7 +59,7 @@ def evaluate_depression_risk(avg_score):
     elif avg_score < 60:
         return {
             "level": "เล็กน้อย",
-            "message": "คะแนนอารมณ์อยู่ในระดับพึ่งเริ่ม เข้าค่ายที่จะเป็นภาวะซึมเศร้า อาจมีความเครียดหรือวิตกกังวล "
+            "message": "คะแนนอารมณ์อยู่ในระดับพึ่งเริ่ม เข้าค่ายที่จะเป็นภาวะซึมเศร้า อาจมีความเครียดหรือวิตกกังวล"
         }
     else:
         return {
@@ -64,23 +67,24 @@ def evaluate_depression_risk(avg_score):
             "message": "คะแนนอารมณ์อยู่ในระดับปกติ ไม่มีความเสี่ยงซึมเศร้าในระดับน่ากังวล"
         }
 
-@app.route("/")
-def index():
-    return render_template("index.html")
+# หน้าแรก
+@app.get("/")
+async def index(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
 
-@app.route("/analyze", methods=["POST"])
-def analyze():
+# วิเคราะห์อารมณ์
+@app.post("/analyze")
+async def analyze(data: dict):
     if not model:
-        return jsonify({"error": "Gemini API is not configured."}), 500
+        return JSONResponse({"error": "Gemini API is not configured."}, status_code=500)
 
-    data = request.get_json()
     message = data.get("message", "").strip()
     emoji = data.get("emoji", "").strip()
 
     if not message:
-        return jsonify({"error": "Missing message"}), 400
+        return JSONResponse({"error": "Missing message"}, status_code=400)
     if not emoji:
-        return jsonify({"error": "Missing emoji"}), 400
+        return JSONResponse({"error": "Missing emoji"}, status_code=400)
 
     prompt = f"""
     วิเคราะห์ข้อความและอีโมจิต่อไปนี้ แล้วตอบกลับเป็น JSON object เท่านั้น ห้ามมีข้อความอื่นนอกเหนือจาก JSON
@@ -103,10 +107,10 @@ def analyze():
     """
 
     try:
-        response = model.generate_content(prompt)
-        # Clean up the response to get only the JSON part
-        cleaned_response = response.text.strip().replace("```json", "").replace("```", "").strip()
-        ai_result = json.loads(cleaned_response)
+        # เรียก API แบบ async
+        response = await model.generate_content_async(prompt)
+        cleaned = response.text.strip().replace("```json", "").replace("```", "").strip()
+        ai_result = json.loads(cleaned)
 
         entry = {
             "date": datetime.now().strftime("%Y-%m-%d"),
@@ -116,59 +120,42 @@ def analyze():
             "summary": ai_result.get("summary", "N/A"),
             "emotionScore": ai_result.get("emotionScore", 50),
         }
-        return jsonify(entry)
+        return JSONResponse(entry)
 
     except Exception as e:
-        print(f"Error calling Gemini API or parsing JSON: {e}")
-        # Fallback to a mock response in case of AI failure
-        fallback_entry = {
+        return JSONResponse({
             "date": datetime.now().strftime("%Y-%m-%d"),
             "message": message,
             "emoji": emoji,
             "emotion": "ไม่สามารถวิเคราะห์ได้",
             "summary": f"เกิดข้อผิดพลาดในการสื่อสารกับ AI: {e}",
             "emotionScore": 50,
-        }
-        return jsonify(fallback_entry), 500
+        }, status_code=500)
 
-
-@app.route("/save", methods=["POST"])
-def save_entry():
-    entry = request.get_json()
-
-    # Validate the received data
+# บันทึกข้อมูล
+@app.post("/save")
+async def save_entry(entry: dict):
     if not isinstance(entry, dict) or not entry.get("message") or not entry.get("emoji"):
-        return jsonify({"error": "Invalid or incomplete entry data"}), 400
+        return JSONResponse({"error": "Invalid or incomplete entry data"}, status_code=400)
 
-    # Ensure the date is the server's current date upon saving
     entry['date'] = datetime.now().strftime("%Y-%m-%d")
-
     history = load_history()
-
-    # Ensure history is a list before appending
-    if not isinstance(history, list):
-        history = []
-
     history.append(entry)
     save_history(history)
 
-    return jsonify({"status": "saved", "entry": entry})
+    return {"status": "saved", "entry": entry}
 
-@app.route("/history")
-def history():
+# ดูประวัติทั้งหมด
+@app.get("/history")
+async def history():
     history = load_history()
-    if not isinstance(history, list):
-        history = [] # Ensure it's a list if file is corrupted
     history_sorted = sorted(history, key=lambda x: x.get("date", ""), reverse=True)
-    last_30 = history_sorted[:30]
-    return jsonify(last_30)
+    return history_sorted[:30]
 
-@app.route("/history7")
-def history7():
+# ดูย้อนหลัง 7 วัน
+@app.get("/history7")
+async def history7():
     history = load_history()
-    if not isinstance(history, list):
-        history = [] # Ensure it's a list if file is corrupted
-
     today = datetime.now().date()
     seven_days_ago = today - timedelta(days=6)
 
@@ -178,27 +165,20 @@ def history7():
             entry_date = datetime.strptime(entry.get("date", ""), "%Y-%m-%d").date()
             if seven_days_ago <= entry_date <= today:
                 filtered.append(entry)
-        except (ValueError, TypeError):
-            # Skip entries with invalid date format or missing date
+        except:
             continue
 
     if not filtered:
-        return jsonify({"history7": [], "averageScore": 0, "risk": evaluate_depression_risk(0)})
+        return {
+            "history7": [],
+            "averageScore": 0,
+            "risk": evaluate_depression_risk(0)
+        }
 
     total_score = sum(entry.get("emotionScore", 0) for entry in filtered)
-    avg_score = total_score / len(filtered) if filtered else 0
-    risk = evaluate_depression_risk(avg_score)
-
-    return jsonify({
+    avg_score = total_score / len(filtered)
+    return {
         "history7": filtered,
         "averageScore": avg_score,
-        "risk": risk,
-    })
-
-if __name__ == "__main__":
-    if not model:
-        print("="*50)
-        print("ไม่สามารถเริ่มเซิร์ฟเวอร์ได้ กรุณาตรวจสอบการตั้งค่า API Key")
-        print("="*50)
-    else:
-        app.run(debug=True, port=5000)
+        "risk": evaluate_depression_risk(avg_score)
+    }
