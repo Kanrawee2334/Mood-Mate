@@ -8,12 +8,12 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import google.generativeai as genai
 
-# โหลด .env
+# โหลด .env (ใน Railway จะใช้ Environment Variables แทนไฟล์ .env ก็ได้)
 load_dotenv()
 
 app = FastAPI()
 
-# Template
+# Template และ Static Files
 templates = Jinja2Templates(directory="templates")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
@@ -107,7 +107,7 @@ async def analyze(data: dict):
     """
 
     try:
-        # เรียก API แบบ async
+        # เรียก Gemini API แบบ async
         response = await model.generate_content_async(prompt)
         cleaned = response.text.strip().replace("```json", "").replace("```", "").strip()
         ai_result = json.loads(cleaned)
@@ -182,9 +182,9 @@ async def history7():
         "averageScore": avg_score,
         "risk": evaluate_depression_risk(avg_score)
     }
-    
+
+# รันแอป (สำหรับ Railway)
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("PORT", 5000))  # ใช้ PORT จาก Railway
+    port = int(os.environ.get("PORT", 5000))
     uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
-
