@@ -15,7 +15,7 @@ app = FastAPI()
 
 # Template และ Static Files
 templates = Jinja2Templates(directory="templates")
-app.mount("/static", StaticFiles(directory="static"), name="static")
+# app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # ตั้งค่า Gemini API
 try:
