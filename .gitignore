@@ -1,0 +1,10 @@
+.env
+*.pyc
+__pycache__/
+*.zip
+# *.md
+.venv/
+.github/*
+*.bkp
+*.bat
+*.drawio

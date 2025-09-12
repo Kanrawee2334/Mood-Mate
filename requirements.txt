@@ -1,5 +1,9 @@
-fastapi
-uvicorn
+Flask
+Flask-Login
+Flask-WTF
 python-dotenv
 google-generativeai
-jinja2
+werkzeug
+uvicorn
+pymongo
+python-decouple
