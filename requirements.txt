@@ -4,6 +4,6 @@ Flask-WTF
 python-dotenv
 google-generativeai
 werkzeug
-uvicorn
 pymongo
 python-decouple
+gunicorn
